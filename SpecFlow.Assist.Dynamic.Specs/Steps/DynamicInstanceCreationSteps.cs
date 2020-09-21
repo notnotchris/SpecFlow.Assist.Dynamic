@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
+using SpecFlow.Assist.Dynamic.PropertyNameFormatting;
 using TechTalk.SpecFlow;
 using TechTalk.SpecFlow.Assist;
 
@@ -18,6 +21,34 @@ namespace Specs.Steps
     public void CreateDynamicInstanceFromTable(Table table)
     {
       this.state.OriginalInstance = table.CreateDynamicInstance();
+    }
+
+    [When(@"I create a dynamic instance with preserved property names from this table")]
+    public void WhenICreateADynamicInstanceWithPreservedPropertyNamesFromThisTable(Table table)
+    {
+        this.state.OriginalInstance = table.CreateDynamicInstance(new PreservePropertyNameFormatter());
+    }
+
+    [When(@"I create a dynamic instance from this table using the '(.*)' property name formatter")]
+    public void WhenICreateADynamicInstanceFromThisTableUsingThePropertyNameFormatter(string propertyNameFormatter, Table table)
+    {
+        var executingAssembly = Assembly.GetExecutingAssembly();
+        var propertyNameFormatterType = executingAssembly
+            .GetTypes()
+            .SingleOrDefault(t => t.GetInterfaces().Contains(typeof(IPropertyNameFormatter)) && t.Name.EndsWith(propertyNameFormatter));
+
+        Assert.IsNotNull(propertyNameFormatterType, "No types implementing {0} found in assembly {1}", nameof(IPropertyNameFormatter), executingAssembly.FullName);
+
+        var customPropertyNameFormatter = Activator.CreateInstance(propertyNameFormatterType) as IPropertyNameFormatter;
+
+        this.state.OriginalInstance = table.CreateDynamicInstance(customPropertyNameFormatter);
+    }
+
+    [Then(@"the '(.*)' property should equal '(.*)'")]
+    public void PropertyShouldBe(string propertyName, string expectedValue)
+    {
+        var actual = ((IDictionary<string, object>)this.state.OriginalInstance)[propertyName];
+        Assert.AreEqual(expectedValue, actual);
     }
 
     [Then(@"the Name property should equal '(.*)'")]

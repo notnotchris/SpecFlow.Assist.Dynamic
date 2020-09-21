@@ -2,9 +2,8 @@
 using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Dynamitey;
-using Dynamitey.DynamicObjects;
+using SpecFlow.Assist.Dynamic.PropertyNameFormatting;
 
 namespace TechTalk.SpecFlow.Assist
 {
@@ -23,6 +22,8 @@ namespace TechTalk.SpecFlow.Assist
     private const string ERRORMESS_SET_VALUES_DIFFERS =
         "A difference was found on row '{0}' for column '{1}' (property '{2}').\n\tInstance:\t'{3}'(type: {4}).\n\tTable:\t\t'{5}'(type: {6})";
 
+    private static readonly IPropertyNameFormatter defaultPropertyNameFormatter = new DefaultPropertyNameFormatter();
+
     /// <summary>
     /// Create a dynamic object from the headers and values of the <paramref name="table"/>
     /// </summary>
@@ -31,20 +32,34 @@ namespace TechTalk.SpecFlow.Assist
     /// <returns>the created object</returns>
     public static ExpandoObject CreateDynamicInstance(this Table table, bool doTypeConversion = true)
     {
-      if (table.Header.Count == 2 && table.RowCount > 1)
-      {
-        var horizontalTable = CreateHorizontalTable(table);
-        return CreateDynamicInstance(horizontalTable.Rows[0], doTypeConversion);
-      }
-
-      if (table.RowCount == 1)
-      {
-        return CreateDynamicInstance(table.Rows[0], doTypeConversion);
-      }
-
-      throw new DynamicInstanceFromTableException(ERRORMESS_INSTANCETABLE_FORMAT);
+        return CreateDynamicInstance(table, defaultPropertyNameFormatter, doTypeConversion);
     }
 
+    /// <summary>
+    /// Create a dynamic object from the headers and values of the <paramref name="table"/>
+    /// </summary>
+    /// <param name="table">the table to create a dynamic object from</param>
+    /// <param name="propertyNameFormatter">The formatter to use to format property names</param>
+    /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
+    /// <returns>the created object</returns>
+    public static ExpandoObject CreateDynamicInstance(
+        this Table table,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
+    {
+        if (table.Header.Count == 2 && table.RowCount > 1)
+        {
+            var horizontalTable = CreateHorizontalTable(table);
+            return CreateDynamicInstance(horizontalTable.Rows[0], propertyNameFormatter, doTypeConversion);
+        }
+
+        if (table.RowCount == 1)
+        {
+            return CreateDynamicInstance(table.Rows[0], propertyNameFormatter, doTypeConversion);
+        }
+
+        throw new DynamicInstanceFromTableException(ERRORMESS_INSTANCETABLE_FORMAT);
+    }
 
     /// <summary>
     /// Creates a set of dynamic objects based of the <paramref name="table"/> headers and values
@@ -54,8 +69,23 @@ namespace TechTalk.SpecFlow.Assist
     /// <returns>a set of dynamics</returns>
     public static IEnumerable<dynamic> CreateDynamicSet(this Table table, bool doTypeConversion = true)
     {
-      return from r in table.Rows
-             select CreateDynamicInstance(r, doTypeConversion);
+        return CreateDynamicSet(table, defaultPropertyNameFormatter, doTypeConversion);
+    }
+
+    /// <summary>
+    /// Creates a set of dynamic objects based of the <paramref name="table"/> headers and values
+    /// </summary>
+    /// <param name="table">the table to create a set of dynamics from</param>
+    /// <param name="propertyNameFormatter">The formatter to use to format property names</param>
+    /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
+    /// <returns>a set of dynamics</returns>
+    public static IEnumerable<dynamic> CreateDynamicSet(
+        this Table table,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
+    {
+        return from r in table.Rows
+            select CreateDynamicInstance(r, propertyNameFormatter, doTypeConversion);
     }
 
     /// <summary>
@@ -67,11 +97,28 @@ namespace TechTalk.SpecFlow.Assist
     /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
     public static void CompareToDynamicInstance(this Table table, dynamic instance, bool doTypeConversion = true)
     {
-      IList<string> propDiffs = GetPropertyDifferences(table, instance);
-      if (propDiffs.Any())
-        throw new DynamicInstanceComparisonException(propDiffs);
+      CompareToDynamicInstance(table, instance, defaultPropertyNameFormatter, doTypeConversion);
+    }
 
-      AssertValuesOfRowDifference(table.Rows[0], instance, doTypeConversion);
+    /// <summary>
+    /// Validates if a dynamic instance <paramref name="instance"/> matches the <paramref name="table"/>
+    /// Throws descriptive exception if not
+    /// </summary>
+    /// <param name="table">the table to compare the instance against</param>
+    /// <param name="instance">the instance to compare the table against</param>
+    /// <param name="propertyNameFormatter">The formatter to use to format property names</param>
+    /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
+    public static void CompareToDynamicInstance(
+        this Table table,
+        dynamic instance,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
+    {
+        IList<string> propDiffs = GetPropertyDifferences(table, instance, propertyNameFormatter);
+        if (propDiffs.Any())
+            throw new DynamicInstanceComparisonException(propDiffs);
+
+        AssertValuesOfRowDifference(table.Rows[0], instance, propertyNameFormatter, doTypeConversion);
     }
 
     /// <summary>
@@ -83,25 +130,46 @@ namespace TechTalk.SpecFlow.Assist
     /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
     public static void CompareToDynamicSet(this Table table, IList<dynamic> set, bool doTypeConversion = true)
     {
-      AssertEqualNumberOfRows(table, set);
-
-      IList<string> propDiffs = GetPropertyDifferences(table, set[0]);
-      if (propDiffs.Any())
-      {
-        throw new DynamicSetComparisonException(ERRORMESS_PROPERTY_DIFF_SET, propDiffs);
-      }
-
-      // Now we know that the table and the list has the same number of rows and properties
-
-      var valueDifference = GetSetValueDifferences(table, set, doTypeConversion);
-
-      if (valueDifference.Any())
-      {
-        throw new DynamicSetComparisonException(ERRORMESS_PROPERTY_DIFF_SET, valueDifference);
-      }
+        CompareToDynamicSet(table, set, defaultPropertyNameFormatter, doTypeConversion);
     }
 
-    private static List<string> GetSetValueDifferences(Table table, IList<object> set, bool doTypeConversion = true)
+    /// <summary>
+    /// Validates that the dynamic set <paramref name="set"/> matches the <paramref name="table"/>
+    /// Throws descriptive exception if not
+    /// </summary>
+    /// <param name="table">the table to compare the set against</param>
+    /// <param name="set">the set to compare the table against</param>
+    /// <param name="propertyNameFormatter">The formatter to use to format property names</param>
+    /// <param name="doTypeConversion">should types be converted according to conventions described in https://github.com/marcusoftnet/SpecFlow.Assist.Dynamic/wiki/Conversion-conventions#property-type-conversions</param>
+    public static void CompareToDynamicSet(
+        this Table table,
+        IList<dynamic> set,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
+    {
+        AssertEqualNumberOfRows(table, set);
+
+        IList<string> propDiffs = GetPropertyDifferences(table, set[0], propertyNameFormatter);
+        if (propDiffs.Any())
+        {
+            throw new DynamicSetComparisonException(ERRORMESS_PROPERTY_DIFF_SET, propDiffs);
+        }
+
+        // Now we know that the table and the list has the same number of rows and properties
+
+        var valueDifference = GetSetValueDifferences(table, set, propertyNameFormatter, doTypeConversion);
+
+        if (valueDifference.Any())
+        {
+            throw new DynamicSetComparisonException(ERRORMESS_PROPERTY_DIFF_SET, valueDifference);
+        }
+    }
+
+    private static List<string> GetSetValueDifferences(
+        Table table,
+        IList<object> set,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
     {
       var memberNames = Dynamic.GetMemberNames(set[0]);
       var valueDifference = new List<string>();
@@ -111,7 +179,7 @@ namespace TechTalk.SpecFlow.Assist
         foreach (var memberName in memberNames)
         {
           var currentHeader = string.Empty;
-          var rowValue = GetRowValue(i, table, memberName, out currentHeader, doTypeConversion);
+          var rowValue = GetRowValue(i, table, memberName, propertyNameFormatter, out currentHeader, doTypeConversion);
           var rowType = rowValue.GetType().Name;
           var instanceValue = Dynamic.InvokeGet(set[i], memberName);
           var instanceType = instanceValue.GetType().Name;
@@ -134,13 +202,19 @@ namespace TechTalk.SpecFlow.Assist
       return valueDifference;
     }
 
-    private static object GetRowValue(int rowIndex, Table table, string memberName, out string currentHeader, bool doTypeConversion = true)
+    private static object GetRowValue(
+        int rowIndex,
+        Table table,
+        string memberName,
+        IPropertyNameFormatter propertyNameFormatter,
+        out string currentHeader,
+        bool doTypeConversion = true)
     {
       object rowValue = null;
       currentHeader = string.Empty;
       foreach (var header in table.Header)
       {
-        if (CreatePropertyName(header) == memberName)
+        if (propertyNameFormatter.Format(header) == memberName)
         {
           currentHeader = header;
           rowValue = CreateTypedValue(table.Rows[rowIndex][header], doTypeConversion);
@@ -150,16 +224,23 @@ namespace TechTalk.SpecFlow.Assist
       return rowValue;
     }
 
-    private static void AssertValuesOfRowDifference(TableRow tableRow, dynamic instance, bool doTypeConversion = true)
+    private static void AssertValuesOfRowDifference(
+        TableRow tableRow,
+        dynamic instance,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
     {
-      IList<string> valueDiffs = ValidateValuesOfRow(tableRow, instance, doTypeConversion);
+      IList<string> valueDiffs = ValidateValuesOfRow(tableRow, instance, propertyNameFormatter, doTypeConversion);
       if (valueDiffs.Any())
         throw new DynamicInstanceComparisonException(valueDiffs);
     }
 
-    private static IList<string> GetPropertyDifferences(Table table, dynamic instance, bool doTypeConversion = true)
+    private static IList<string> GetPropertyDifferences(
+        Table table,
+        dynamic instance,
+        IPropertyNameFormatter propertyNameFormatter)
     {
-      var tableHeadersAsPropertyNames = table.Header.Select(CreatePropertyName);
+      var tableHeadersAsPropertyNames = table.Header.Select(propertyNameFormatter.Format);
       IEnumerable<string> instanceMembers = Dynamic.GetMemberNames(instance);
 
       return GetPropertyNameDifferences(tableHeadersAsPropertyNames, instanceMembers);
@@ -174,13 +255,17 @@ namespace TechTalk.SpecFlow.Assist
       }
     }
 
-    private static IList<string> ValidateValuesOfRow(TableRow tableRow, dynamic instance, bool doTypeConversion = true)
+    private static IList<string> ValidateValuesOfRow(
+        TableRow tableRow,
+        dynamic instance,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
     {
       var valueDiffs = new List<string>();
 
       foreach (var header in tableRow.Keys)
       {
-        var propertyName = CreatePropertyName(header);
+        var propertyName = propertyNameFormatter.Format(header);
         var valueFromInstance = Dynamic.InvokeGet(instance, propertyName);
         var typeFromInstance = valueFromInstance.GetType().Name;
         var valueFromTable = CreateTypedValue(tableRow[header], doTypeConversion);
@@ -223,14 +308,17 @@ namespace TechTalk.SpecFlow.Assist
       return horizontalTable;
     }
 
-    private static ExpandoObject CreateDynamicInstance(TableRow tablerow, bool doTypeConversion = true)
+    private static ExpandoObject CreateDynamicInstance(
+        TableRow tablerow,
+        IPropertyNameFormatter propertyNameFormatter,
+        bool doTypeConversion = true)
     {
       dynamic expando = new ExpandoObject();
       var dicExpando = expando as IDictionary<string, object>;
 
       foreach (var header in tablerow.Keys)
       {
-        var propName = CreatePropertyName(header);
+        var propName = propertyNameFormatter.Format(header);
         var propValue = CreateTypedValue(tablerow[header], doTypeConversion);
         dicExpando.Add(propName, propValue);
       }
@@ -267,43 +355,6 @@ namespace TechTalk.SpecFlow.Assist
         return dt;
 
       return valueFromTable;
-    }
-
-    private static string CreatePropertyName(string header)
-    {
-      var cleanedHeader = RemoveReservedChars(header);
-      var propName = FixCasing(cleanedHeader);
-
-      // Throw if no chars in string
-      if (propName.Length != 0) return propName;
-
-      var mess = string.Format("Property '{0}' only contains reserved C# characters", header);
-      throw new DynamicInstanceFromTableException(mess);
-    }
-
-    private static string FixCasing(string header)
-    {
-      var arr = header.Split(' ');
-      var propName = arr[0]; // leave the first element as is, since it might be correct cased...
-
-      for (var i = 1; i < arr.Length; i++)
-      {
-        var s = arr[i];
-        if (s.Length > 0)
-        {
-          propName += s[0].ToString().ToUpperInvariant() +
-                  s.Substring(1).ToLowerInvariant();
-        }
-      }
-
-      return propName;
-    }
-
-    private static string RemoveReservedChars(string orgPropertyName)
-    {
-      const string pattern = @"[^\w\s]";
-      const string replacement = "";
-      return Regex.Replace(orgPropertyName, pattern, replacement);
     }
   }
 }
